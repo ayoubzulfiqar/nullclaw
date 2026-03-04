@@ -263,7 +263,11 @@ Config: `~/.nullclaw/config.json` (created by `onboard`)
 > **OpenClaw compatible:** nullclaw uses the same config structure as [OpenClaw](https://github.com/openclaw/openclaw) (snake_case). Providers live under `models.providers`, the default model under `agents.defaults.model.primary`, and channels use `accounts` wrappers.
 > Top-level `default_provider` / `default_model` keys are not supported.
 >
-> **Vertex AI note:** set `models.providers.vertex.base_url` to the Vertex Gemini models path (`.../projects/<id>/locations/<loc>/publishers/google/models`) and use a bearer token in `api_key` (or `VERTEX_API_KEY`/`VERTEX_OAUTH_TOKEN` env vars).
+> **Vertex AI note:** `models.providers.vertex.api_key` supports either:
+> 1. a bearer token (`ya29...`), or
+> 2. a full Google service-account JSON string (same shape as Apps Script `GEMINI_KEY` with `project_id`, `client_email`, `private_key`).
+>
+> `models.providers.vertex.base_url` can be set explicitly (`.../projects/<id>/locations/<loc>/publishers/google/models`), or omitted when service-account JSON is used (nullclaw will derive it from `project_id`, with `VERTEX_LOCATION` defaulting to `global`).
 
 ```json
 {
@@ -274,7 +278,7 @@ Config: `~/.nullclaw/config.json` (created by `onboard`)
       "openrouter": { "api_key": "sk-or-..." },
       "groq": { "api_key": "gsk_..." },
       "vertex": {
-        "api_key": "ya29.your-oauth-token",
+        "api_key": "{\"type\":\"service_account\",\"project_id\":\"your-project\",\"client_email\":\"svc@your-project.iam.gserviceaccount.com\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\"}",
         "base_url": "https://aiplatform.googleapis.com/v1/projects/your-project/locations/global/publishers/google/models"
       },
       "anthropic": { "api_key": "sk-ant-...", "base_url": "https://api.anthropic.com" }
