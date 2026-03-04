@@ -343,6 +343,61 @@ pub const OpenAiCompatibleProvider = struct {
         needs_free: bool,
     };
 
+    const SplitThinkContent = struct {
+        visible: []const u8,
+        reasoning: ?[]const u8,
+    };
+
+    fn splitThinkContent(allocator: std.mem.Allocator, text: []const u8) !SplitThinkContent {
+        const open_tag = "<think>";
+        const close_tag = "</think>";
+
+        if (std.mem.indexOf(u8, text, open_tag) == null and std.mem.indexOf(u8, text, close_tag) == null) {
+            return .{
+                .visible = try allocator.dupe(u8, text),
+                .reasoning = null,
+            };
+        }
+
+        var visible_buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer visible_buf.deinit(allocator);
+        var reasoning_buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer reasoning_buf.deinit(allocator);
+
+        var i: usize = 0;
+        var depth: usize = 0;
+        while (i < text.len) {
+            if (std.mem.startsWith(u8, text[i..], open_tag)) {
+                depth += 1;
+                i += open_tag.len;
+                continue;
+            }
+            if (std.mem.startsWith(u8, text[i..], close_tag)) {
+                if (depth > 0) depth -= 1;
+                i += close_tag.len;
+                continue;
+            }
+
+            if (depth == 0) {
+                try visible_buf.append(allocator, text[i]);
+            } else {
+                try reasoning_buf.append(allocator, text[i]);
+            }
+            i += 1;
+        }
+
+        const visible = try allocator.dupe(u8, std.mem.trim(u8, visible_buf.items, " \t\r\n"));
+        errdefer allocator.free(visible);
+
+        const reasoning_trimmed = std.mem.trim(u8, reasoning_buf.items, " \t\r\n");
+        const reasoning = if (reasoning_trimmed.len > 0) try allocator.dupe(u8, reasoning_trimmed) else null;
+
+        return .{
+            .visible = visible,
+            .reasoning = reasoning,
+        };
+    }
+
     /// Parse text content from an OpenAI-compatible response.
     pub fn parseTextResponse(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
@@ -384,9 +439,12 @@ pub const OpenAiCompatibleProvider = struct {
                 const msg_obj = msg.object;
 
                 var content: ?[]const u8 = null;
+                var reasoning_content: ?[]const u8 = null;
                 if (msg_obj.get("content")) |c| {
                     if (c == .string) {
-                        content = try allocator.dupe(u8, c.string);
+                        const split = try splitThinkContent(allocator, c.string);
+                        content = split.visible;
+                        reasoning_content = split.reasoning;
                     }
                 }
 
@@ -433,6 +491,7 @@ pub const OpenAiCompatibleProvider = struct {
                     .tool_calls = try tool_calls_list.toOwnedSlice(allocator),
                     .usage = usage,
                     .model = model_str,
+                    .reasoning_content = reasoning_content,
                 };
             }
         }
@@ -838,6 +897,33 @@ test "parseTextResponse extracts content" {
     const result = try OpenAiCompatibleProvider.parseTextResponse(std.testing.allocator, body);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("Hello from Venice!", result);
+}
+
+test "parseNativeResponse extracts reasoning_content from think tags" {
+    const body =
+        \\{"choices":[{"message":{"content":"<think>private chain of thought</think>\nVisible answer"}}],"model":"minimax-m2.5"}
+    ;
+    const result = try OpenAiCompatibleProvider.parseNativeResponse(std.testing.allocator, body);
+    defer {
+        if (result.content) |content| {
+            if (content.len > 0) std.testing.allocator.free(content);
+        }
+        for (result.tool_calls) |tc| {
+            if (tc.id.len > 0) std.testing.allocator.free(tc.id);
+            if (tc.name.len > 0) std.testing.allocator.free(tc.name);
+            if (tc.arguments.len > 0) std.testing.allocator.free(tc.arguments);
+        }
+        if (result.tool_calls.len > 0) std.testing.allocator.free(result.tool_calls);
+        if (result.model.len > 0) std.testing.allocator.free(result.model);
+        if (result.reasoning_content) |reasoning| {
+            if (reasoning.len > 0) std.testing.allocator.free(reasoning);
+        }
+    }
+
+    try std.testing.expect(result.content != null);
+    try std.testing.expectEqualStrings("Visible answer", result.content.?);
+    try std.testing.expect(result.reasoning_content != null);
+    try std.testing.expectEqualStrings("private chain of thought", result.reasoning_content.?);
 }
 
 test "parseTextResponse empty choices" {
