@@ -436,7 +436,9 @@ fn containsUnsafeRedirection(s: []const u8) bool {
 
 fn isNullSinkTarget(target: []const u8) bool {
     if (std.mem.eql(u8, target, "/dev/null")) return true;
-    if (std.ascii.eqlIgnoreCase(target, "nul")) return true;
+    if (comptime @import("builtin").os.tag == .windows) {
+        if (std.ascii.eqlIgnoreCase(target, "nul")) return true;
+    }
     return false;
 }
 
@@ -803,7 +805,11 @@ test "null sink redirect is allowed" {
     try std.testing.expect(p.isCommandAllowed("echo ok >/dev/null"));
     try std.testing.expect(p.isCommandAllowed("echo ok 2>/dev/null"));
     try std.testing.expect(p.isCommandAllowed("echo ok >\"/dev/null\""));
-    try std.testing.expect(p.isCommandAllowed("echo ok >NUL"));
+    if (comptime @import("builtin").os.tag == .windows) {
+        try std.testing.expect(p.isCommandAllowed("echo ok >NUL"));
+    } else {
+        try std.testing.expect(!p.isCommandAllowed("echo ok >NUL"));
+    }
 }
 
 test "quoted greater-than is not treated as redirection" {
